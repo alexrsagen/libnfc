@@ -100,16 +100,17 @@ IF(WIN32)
       DEPENDS nfc ${CMAKE_CURRENT_SOURCE_DIR}/../contrib/win32/nfc.def
     )
     ADD_CUSTOM_TARGET(win32lib ALL DEPENDS libnfc.lib)
+
+    # At compile time we need the .LIB file, we place it in the lib directory
+    INSTALL(FILES ${CMAKE_CURRENT_BINARY_DIR}/libnfc.lib DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT libraries)
   ELSE()
     ADD_LIBRARY(win32lib ALIAS nfc)
+    INSTALL(TARGETS nfc LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT libraries)
   ENDIF()
 
   # On Windows the shared (runtime) library should be either in the same 
   # directory as the excutables or in the path, we add it to same directory
   INSTALL(TARGETS nfc RUNTIME DESTINATION bin COMPONENT libraries)
-
-  # At compile time we need the .LIB file, we place it in the lib directory
-  INSTALL(FILES ${CMAKE_CURRENT_BINARY_DIR}/libnfc.lib DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT libraries)
 ELSE(WIN32)
   INSTALL(TARGETS nfc LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT libraries)
 ENDIF(WIN32)
