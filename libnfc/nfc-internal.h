@@ -33,8 +33,8 @@
 #define __NFC_INTERNAL_H__
 
 #include <stdbool.h>
-#include <err.h>
 #if !defined(_MSC_VER)
+#  include <err.h>
 #  include <sys/time.h>
 #endif
 
