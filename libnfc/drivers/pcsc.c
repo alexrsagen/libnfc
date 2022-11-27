@@ -67,10 +67,13 @@
 #define SCARD_ATTR_VENDOR_IFD_SERIAL_NO SCARD_ATTR_VALUE(SCARD_CLASS_VENDOR_INFO, 0x0103) /**< Vendor-supplied interface device serial number. */
 #define SCARD_ATTR_ICC_TYPE_PER_ATR SCARD_ATTR_VALUE(SCARD_CLASS_ICC_STATE, 0x0304) /**< Single byte indicating smart card type */
 #else
-#ifndef _Win32
+#ifndef _WIN32
 #include <reader.h>
 #endif
 #include <winscard.h>
+#ifndef MAX_ATR_SIZE
+#define MAX_ATR_SIZE 33
+#endif
 #endif
 
 #ifdef WIN32
