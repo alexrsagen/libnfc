@@ -88,6 +88,8 @@
 #define LOG_GROUP    NFC_LOG_GROUP_DRIVER
 #define LOG_CATEGORY "libnfc.driver.pcsc"
 
+static const char *stringify_error(const LONG pcscError);
+
 static const char *supported_devices[] = {
   "ACS ACR122",         // ACR122U & Touchatag, last version
   "ACS ACR 38U-CCID",   // Touchatag, early version
@@ -135,9 +137,16 @@ pcsc_free_scardcontext(void)
   }
 }
 
-#define ICC_TYPE_UNKNOWN 0
-#define ICC_TYPE_14443A  5
-#define ICC_TYPE_14443B  6
+// Source: Interoperability Specification for ICCs and Personal Computer Systems
+// Table 3-2. Codes for Enumerating ICC State
+#define ICC_TYPE_UNKNOWN    0 // unknown ICC type
+#define ICC_TYPE_7816_ASYNC 1 // ISO 7816 Asynchronous
+#define ICC_TYPE_7816_SYNC  2 // ISO 7816 Synchronous (unspecified)
+#define ICC_TYPE_7816_10_1  3 // ISO 7816-10 Synchronous (Type 1)
+#define ICC_TYPE_7816_10_2  4 // ISO 7816-10 Synchronous (Type 2)
+#define ICC_TYPE_14443A     5 // ISO 14443 (Type A)
+#define ICC_TYPE_14443B     6 // ISO 14443 (Type B)
+#define ICC_TYPE_15693      7 // ISO 15693
 
 bool is_pcsc_reader_vendor_feitian(const struct nfc_device *pnd);
 
@@ -180,7 +189,7 @@ static int pcsc_get_status(struct nfc_device *pnd, int *target_present, uint8_t 
   data->last_error = SCardStatus(data->hCard, NULL, &reader_len, &state, &protocol, atr, &dw_atr_len);
   if (data->last_error != SCARD_S_SUCCESS
       && data->last_error != SCARD_W_RESET_CARD) {
-    log_put(LOG_GROUP, LOG_CATEGORY, NFC_LOG_PRIORITY_DEBUG, "Get status failed");
+    log_put(LOG_GROUP, LOG_CATEGORY, NFC_LOG_PRIORITY_DEBUG, "Get status failed: %s", stringify_error(data->last_error));
     return NFC_EIO;
   }
 
@@ -338,7 +347,7 @@ static int pcsc_props_to_target(struct nfc_device *pnd, uint8_t it, const uint8_
   if (NULL != pnt) {
     switch (nmt) {
       case NMT_ISO14443A:
-        if ((it == ICC_TYPE_UNKNOWN || it == ICC_TYPE_14443A)
+        if ((it == ICC_TYPE_UNKNOWN || it == ICC_TYPE_14443A || it == ICC_TYPE_7816_ASYNC)
             && (szuid <= 0 || szuid == 4 || szuid == 7 || szuid == 10)
             && NULL != patr && szatr >= 5
             && patr[0] == 0x3B
@@ -352,41 +361,33 @@ static int pcsc_props_to_target(struct nfc_device *pnd, uint8_t it, const uint8_
             memcpy(pnt->nti.nai.abtUid, puid, szuid);
             pnt->nti.nai.szUidLen = szuid;
           }
-          if (is_pcsc_reader_vendor_feitian(pnd)) {
-            uint8_t atqa[2];
-            pcsc_get_atqa(pnd, atqa, sizeof(atqa));
-            //ATQA Coding of NXP Contactless Card ICs
-            if(atqa[0] == 0x00 || atqa[0] == 0x03)
-            {
-              memcpy(pnt->nti.nai.abtAtqa,atqa,2);
-            }else {
-              pnt->nti.nai.abtAtqa[0] = atqa[1];
-              pnt->nti.nai.abtAtqa[1] = atqa[0];
-            }
-
-            uint8_t sak[1];
-            pcsc_get_sak(pnd, sak, sizeof(sak));
-            pnt->nti.nai.btSak = sak[0];
-            uint8_t ats[256];
-            int ats_len = pcsc_get_ats(pnd, ats, sizeof(ats));
-            ats_len = (ats_len > 0 ? ats_len : 0);//The reader may not support to get ATS
-            memcpy(pnt->nti.nai.abtAts, ats, ats_len);
-            pnt->nti.nai.szAtsLen = ats_len;
-          } else {
-            /* SAK_ISO14443_4_COMPLIANT */
-            pnt->nti.nai.btSak = 0x20;
-            /* Choose TL, TA, TB, TC according to Mifare DESFire */
-            memcpy(pnt->nti.nai.abtAts, "\x75\x77\x81\x02", 4);
-            /* copy historical bytes */
-            memcpy(pnt->nti.nai.abtAts + 4, patr + 4, (uint8_t)(szatr - 5));
-            pnt->nti.nai.szAtsLen = 4 + (uint8_t)(szatr - 5);
+          uint8_t atqa[2];
+          pcsc_get_atqa(pnd, atqa, sizeof(atqa));
+          //ATQA Coding of NXP Contactless Card ICs
+          if(atqa[0] == 0x00 || atqa[0] == 0x03)
+          {
+            memcpy(pnt->nti.nai.abtAtqa,atqa,2);
+          }else {
+            pnt->nti.nai.abtAtqa[0] = atqa[1];
+            pnt->nti.nai.abtAtqa[1] = atqa[0];
           }
 
+          uint8_t sak[1];
+          pcsc_get_sak(pnd, sak, sizeof(sak));
+          pnt->nti.nai.btSak = sak[0];
+          uint8_t ats[256];
+          int ats_len = pcsc_get_ats(pnd, ats, sizeof(ats));
+          ats_len = (ats_len > 0 ? ats_len : 0);//The reader may not support to get ATS
+          memcpy(pnt->nti.nai.abtAts, ats, ats_len);
+          pnt->nti.nai.szAtsLen = ats_len;
+
           return NFC_SUCCESS;
+        } else {
+          log_put(LOG_GROUP, LOG_CATEGORY, NFC_LOG_PRIORITY_DEBUG, "Target modulation type: %s (IT: %d) (UID size: %d) (ATR[0]: %02X)", str_nfc_modulation_type(nmt), it, szuid, patr[0]);
         }
         break;
       case NMT_ISO14443B:
-        if ((ICC_TYPE_UNKNOWN == 0 || ICC_TYPE_14443B == 6)
+        if ((it == ICC_TYPE_UNKNOWN || it == ICC_TYPE_14443B)
             && (szuid <= 0 || szuid == 8)
             && NULL != patr && szatr == 5 + 8
             && patr[0] == 0x3B
@@ -401,6 +402,8 @@ static int pcsc_props_to_target(struct nfc_device *pnd, uint8_t it, const uint8_
           /* PI_ISO14443_4_SUPPORTED */
           pnt->nti.nbi.abtProtocolInfo[1] = 0x01;
           return NFC_SUCCESS;
+        } else {
+          log_put(LOG_GROUP, LOG_CATEGORY, NFC_LOG_PRIORITY_DEBUG, "Target modulation type: %s (IT: %d) (UID size: %d) (ATR: %04X)", str_nfc_modulation_type(nmt), it, szuid, patr);
         }
         break;
       default:
@@ -541,15 +544,15 @@ pcsc_open(const nfc_context *context, const nfc_connstring connstring)
   // Test if context succeeded
   if (!(pscc = pcsc_get_scardcontext()))
     goto error;
-  DRIVER_DATA(pnd)->last_error = SCardConnect(*pscc, ndd.pcsc_device_name, SCARD_SHARE_DIRECT, 0 | 1, &(DRIVER_DATA(pnd)->hCard), (void *) & (DRIVER_DATA(pnd)->ioCard.dwProtocol));
+  DRIVER_DATA(pnd)->last_error = SCardConnect(*pscc, ndd.pcsc_device_name, SCARD_SHARE_SHARED, SCARD_PROTOCOL_T0 | SCARD_PROTOCOL_T1, &(DRIVER_DATA(pnd)->hCard), (void *) & (DRIVER_DATA(pnd)->ioCard.dwProtocol));
   if (DRIVER_DATA(pnd)->last_error != SCARD_S_SUCCESS) {
     // We can not connect to this device.
-    log_put(LOG_GROUP, LOG_CATEGORY, NFC_LOG_PRIORITY_DEBUG, "%s", "PCSC connect failed");
+    log_put(LOG_GROUP, LOG_CATEGORY, NFC_LOG_PRIORITY_DEBUG, "PCSC connect failed: %s", stringify_error(DRIVER_DATA(pnd)->last_error));
     goto error;
   }
   // Configure I/O settings for card communication
   DRIVER_DATA(pnd)->ioCard.cbPciLength = sizeof(SCARD_IO_REQUEST);
-  DRIVER_DATA(pnd)->dwShareMode = SCARD_SHARE_DIRECT;
+  DRIVER_DATA(pnd)->dwShareMode = SCARD_SHARE_SHARED;
 
   // Done, we found the reader we are looking for
   snprintf(pnd->name, sizeof(pnd->name), "%s", ndd.pcsc_device_name);
@@ -568,7 +571,7 @@ error:
 static void
 pcsc_close(nfc_device *pnd)
 {
-  SCardDisconnect(DRIVER_DATA(pnd)->hCard, SCARD_LEAVE_CARD);
+  SCardDisconnect(DRIVER_DATA(pnd)->hCard, SCARD_RESET_CARD);
   pcsc_free_scardcontext();
 
   nfc_device_free(pnd);
@@ -768,12 +771,13 @@ static int pcsc_initiator_select_passive_target(struct nfc_device *pnd,  const n
 
   uint8_t icc_type = pcsc_get_icc_type(pnd);
   int uid_len = pcsc_get_uid(pnd, uid, sizeof uid);
-  if (pcsc_props_to_target(pnd, icc_type, atr, atr_len, uid, uid_len, nm.nmt, pnt) != NFC_SUCCESS) {
-    log_put(LOG_GROUP, LOG_CATEGORY, NFC_LOG_PRIORITY_DEBUG, "Type of target not supported");
+  int props_error = pcsc_props_to_target(pnd, icc_type, atr, atr_len, uid, uid_len, nm.nmt, pnt);
+  if (props_error != NFC_SUCCESS) {
+    log_put(LOG_GROUP, LOG_CATEGORY, NFC_LOG_PRIORITY_DEBUG, "Type of target (0x%p) not supported: %d", (void*)pnt, props_error);
     return NFC_EDEVNOTSUPP;
   }
 
-  pnd->last_error = pcsc_reconnect(pnd, SCARD_SHARE_SHARED, SCARD_PROTOCOL_T0 | SCARD_PROTOCOL_T1, SCARD_LEAVE_CARD);
+  pnd->last_error = pcsc_reconnect(pnd, SCARD_SHARE_SHARED, SCARD_PROTOCOL_T0 | SCARD_PROTOCOL_T1, SCARD_RESET_CARD);
   if (pnd->last_error != NFC_SUCCESS)
     return pnd->last_error;
 
@@ -783,7 +787,7 @@ static int pcsc_initiator_select_passive_target(struct nfc_device *pnd,  const n
 #if 0
 static int pcsc_initiator_deselect_target(struct nfc_device *pnd)
 {
-  pnd->last_error = pcsc_reconnect(pnd, SCARD_SHARE_DIRECT, 0, SCARD_LEAVE_CARD);
+  pnd->last_error = pcsc_reconnect(pnd, SCARD_SHARE_SHARED, 0, SCARD_RESET_CARD);
   return pnd->last_error;
 }
 #endif
