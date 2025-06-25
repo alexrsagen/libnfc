@@ -1155,6 +1155,14 @@ pn53x_initiator_select_passive_target_ext(struct nfc_device *pnd,
         uint8_t abtRx[1];
         uint8_t *pbtInitData = (uint8_t *) "\x0b";
         size_t szInitData = 1;
+        
+        if ((res = pn53x_write_register(pnd, PN53X_REG_CIU_TxAuto, 0xef, 0x07)) < 0) // Initial RFOn, Tx2 RFAutoEn, Tx1 RFAutoEn
+          return res;
+        if ((res = pn53x_write_register(pnd, PN53X_REG_CIU_CWGsP, 0x3f, 0x3f)) < 0) // Conductance of the P-Driver
+          return res;
+        if ((res = pn53x_write_register(pnd, PN53X_REG_CIU_ModGsP, 0x3f, 0x12)) < 0) // Driver P-output conductance for the time of modulation
+          return res;
+        
         // Getting random Chip_ID
         if ((res = pn53x_initiator_transceive_bytes(pnd, abtInitiate, szInitiateLen, abtRx, sizeof(abtRx), timeout)) < 0) {
           if ((res == NFC_ERFTRANS) && (CHIP_DATA(pnd)->last_status_byte == 0x01)) { // Chip timeout
@@ -1259,6 +1267,7 @@ pn53x_initiator_select_passive_target_ext(struct nfc_device *pnd,
         szTargetsData = (size_t)res;
       }
       found = true;
+      res = 1; // TargetCount to 1 as only one target is supported here
       break;
     } while (pnd->bInfiniteSelect);
     if (! found)
@@ -1339,6 +1348,7 @@ pn53x_initiator_select_passive_target_ext(struct nfc_device *pnd,
         return res;
       }
       found = true;
+      res = 1; // TargetCount to 1 as only one target is supported here
       break;
     } while (pnd->bInfiniteSelect);
     if (! found) {
@@ -1369,6 +1379,7 @@ pn53x_initiator_select_passive_target_ext(struct nfc_device *pnd,
         return res;
       }
     }
+    res = abtTargetsData[0]; // TargetCount to abtTargetsData[0] (Tg from InListPassiveTarget answer)
   }
   if (pn53x_current_target_new(pnd, &nttmp) == NULL) {
     pnd->last_error = NFC_ESOFT;
@@ -1378,7 +1389,7 @@ pn53x_initiator_select_passive_target_ext(struct nfc_device *pnd,
   if (pnt) {
     memcpy(pnt, &nttmp, sizeof(nfc_target));
   }
-  return abtTargetsData[0];
+  return res;
 }
 
 int
